@@ -1,0 +1,6 @@
+bandscape.egg-info/PKG-INFO
+bandscape.egg-info/SOURCES.txt
+bandscape.egg-info/dependency_links.txt
+bandscape.egg-info/entry_points.txt
+bandscape.egg-info/requires.txt
+bandscape.egg-info/top_level.txt
