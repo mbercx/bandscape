@@ -89,25 +89,20 @@ class BandScape(object):
             # Get all symmetry equivalent kpoints of the kpoint in the IBZ
             sym_kpoints = np.dot(k, [m.rotation_matrix for m in symmops])
 
-            rm_list = []
+            add_list = [sym_kpoints[0],]
 
-            # Identify and remove duplicates from the list of equivalent
-            # k-points:
-            for i in range(len(sym_kpoints) - 1):
-                for j in range(i + 1, len(sym_kpoints)):
-                    if np.allclose(pbc_diff(sym_kpoints[i], sym_kpoints[j]), [0, 0, 0],
-                                   tol):
-                        rm_list.append(i)
-                        break
-            sym_kpoints = np.delete(sym_kpoints, rm_list, axis=0)
+            for point in list(sym_kpoints[1:]):
+
+                if not any(np.linalg.norm(x - point) < 1e-6 for x in add_list):
+                    add_list.append(point)
 
             # Add the list of kpoints to the total array
-            all_kpts = np.vstack([all_kpts, sym_kpoints])
+            all_kpts = np.vstack([all_kpts, add_list])
 
             # Also add the energy value of the corresponding kpoint #sympoints
             # times
             all_lu_energies = np.vstack(
-                [all_lu_energies, np.ones([len(sym_kpoints), 1]) * energy]
+                [all_lu_energies, np.ones([len(add_list), 1]) * energy]
             )
 
         self._all_kpoints = all_kpts
