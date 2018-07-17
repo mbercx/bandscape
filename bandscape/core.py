@@ -91,7 +91,7 @@ class BandScape(object):
 
             for point in list(sym_kpoints[1:]):
 
-                if not any(np.linalg.norm(pbc_diff(x, point)) < 1e-6 for x in
+                if not any(np.linalg.norm(x - point) < 1e-6 for x in
                            add_list):
                     add_list.append(point)
 
