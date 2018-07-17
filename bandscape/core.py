@@ -81,8 +81,6 @@ class BandScape(object):
         sg = SpacegroupAnalyzer(self._out.structures[-1])
         symmops = sg.get_point_group_operations(cartesian=False)
 
-        print("spaceman!")
-
         # Reconstruct all the kpoints with the corresponding energies
         for k, energy in zip(kpts_bz[1:], self.lu_energies[1:]):
 
@@ -93,7 +91,8 @@ class BandScape(object):
 
             for point in list(sym_kpoints[1:]):
 
-                if not any(np.linalg.norm(x - point) < 1e-6 for x in add_list):
+                if not any(np.linalg.norm(pbc_diff(x, point)) < 1e-6 for x in
+                           add_list):
                     add_list.append(point)
 
             # Add the list of kpoints to the total array
