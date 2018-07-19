@@ -280,8 +280,6 @@ class BandScape(object):
         :param kpoint:
         :return:
         """
-        bz = set_up_brillouin(self._out.lattice)
-
         energy_maps = []
         x, y = np.mgrid[-2:2:0.02, -2:2:0.02]
 
@@ -289,59 +287,9 @@ class BandScape(object):
 
             kpoint = self.kpoints[kpoint_index]
 
-            ho_energy = self.ho_energies[kpoint_index]
+            x, y, energies = self.find_energy_map(kpoint, cartesian)
 
-            q_vectors = self._all_kpoints - np.vstack(
-                len(self._all_kpoints) * [kpoint])
-            lu_energies = self._all_lu_energies - ho_energy
-
-            q_vectors_c = np.dot(q_vectors, self._out.lattice_rec.matrix)
-
-            q_vectors_bz_c = []
-
-            for i, q in enumerate(q_vectors_c):
-                try:
-                    new_q = return_to_brillouin(q, bz, cartesian=True)
-                    q_vectors_bz_c.append(new_q)
-                except ValueError:
-                    print(
-                        "Found a kpoint that could not be returned to 1st BZ, "
-                        "ignoring...")
-                    np.delete(lu_energies, i, axis=0)
-
-            q_vectors_bz = np.dot(q_vectors_bz_c, np.linalg.inv(
-                self._out.lattice_rec.matrix))
-
-            q_110 = q_vectors_bz[0]
-            lu_110 = np.array([lu_energies[0], ])
-
-            # Extract the kpoints in the 110 plane
-            for k, energy in zip(q_vectors_bz[1:], lu_energies[1:]):
-                if abs(k[2]) < 1e-5:
-                    q_110 = np.vstack([q_110, k])
-                    lu_110 = np.vstack([lu_110, energy])
-
-            # Set up a new axis system to find suitable coordinates
-            b1 = self._out.lattice_rec.matrix[0, :]
-            b2 = self._out.lattice_rec.matrix[1, :]
-
-            vx = b1 - b2
-            vx = vx / np.linalg.norm(vx)
-            vy = b1 + b2
-            vy = vy / np.linalg.norm(vy)
-            vz = np.cross(vx, vy)
-
-            v_mat = np.vstack([vx, vy, vz])
-
-            # Find the coordinates of the kpoints in this new axis system
-            q_110_v = np.dot(np.dot(q_110, self._out.lattice_rec.matrix),
-                             np.linalg.inv(v_mat))
-
-            # Interpolate
-            e = interpolate.griddata(q_110_v[:, 0:2], lu_110, (x, y),
-                                     method='linear')
-
-            energy_maps.append(e)
+            energy_maps.append(energies)
 
         energy_maps = np.array(energy_maps)
 
@@ -437,7 +385,9 @@ def return_to_brillouin(kpoint, lattice, neighbors=None, cartesian=True):
 
     :return:
     """
-    in_brillouin, point = is_in_brillouin(kpoint, lattice, cartesian=cartesian)
+    in_brillouin, point = is_in_brillouin(kpoint, lattice,
+                                          neighbors=neighbors,
+                                          cartesian=cartesian)
 
     if in_brillouin:
         return kpoint
