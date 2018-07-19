@@ -452,7 +452,7 @@ def set_up_brillouin(lattice):
     return bz_facets
 
 
-def is_in_brillouin(kpoint, brillouin, cartesian=True, tol=1e-2):
+def is_in_brillouin(kpoint, rec_lattice, cartesian=True):
     """
 
     :param kpoint:
@@ -460,24 +460,28 @@ def is_in_brillouin(kpoint, brillouin, cartesian=True, tol=1e-2):
     :return:
     """
     if not cartesian:
-        rec_lattice = brillouin[0][0].lattice
         kpoint = np.dot(kpoint, rec_lattice.matrix)
 
     in_brillouin = True
 
-    facet_number = 0
+    # Get all combinations of the reciprocal lattice vectors and the zero
+    # vector, up to the maximum number of combination length
+    neighbors = iter.combinations_with_replacement(
+        list(np.vstack([np.array([0, 0, 0]), rec_lattice.matrix,
+                        - rec_lattice.matrix])), 1)
 
-    while in_brillouin and facet_number < len(brillouin):
+    closest_point = np.array([0, 0, 0])
+    dist = np.linalg.norm(kpoint)
 
-        if np.linalg.norm(brillouin[facet_number].center - kpoint) < 1e-4:
-            return True
+    for point in neighbors:
 
-        if brillouin[facet_number].angle_to_normal(kpoint) < pi / 2 - tol:
+        if np.linalg.norm(point - kpoint) < dist:
+
             in_brillouin = False
+            dist = np.linalg.norm(point - kpoint)
+            closest_point = point
 
-        facet_number += 1
-
-    return in_brillouin
+    return in_brillouin, closest_point
 
 
 def return_to_brillouin(kpoint, brillouin, cartesian=True,
