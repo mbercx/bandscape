@@ -28,6 +28,7 @@ class BandScape(object):
 
         self._out = vasprun
         self._kpoints = self._out.actual_kpoints
+        self._energy_maps = [None]*len(self.kpoints)
         self._eigenvals = list(self._out.eigenvalues.values())[0]
         self._lu_energies = self._find_lu_energies()
         self._ho_energies = self._find_ho_energies()
@@ -147,7 +148,6 @@ class BandScape(object):
         Returns:
 
         """
-        bz = set_up_brillouin(self._out.lattice)
 
         kpoint_index = [i for i, x in enumerate(list(self.kpoints)) if
                         np.linalg.norm(x - np.array(kpoint)) < 1e-4]
@@ -158,59 +158,70 @@ class BandScape(object):
             raise ValueError("Kpoint not found in list of irreducible "
                              "kpoints.")
 
-        ho_energy = self.ho_energies[kpoint_index]
+        if self._energy_maps[kpoint_index]:
 
-        q_vectors = self._all_kpoints - np.vstack(
-            len(self._all_kpoints) * [kpoint])
-        lu_energies = self._all_lu_energies - ho_energy
+            return self._energy_maps[kpoint_index]
 
-        q_vectors_c = np.dot(q_vectors, self._out.lattice_rec.matrix)
+        else:
 
-        q_vectors_bz_c = []
+            bz = set_up_brillouin(self._out.lattice)
 
-        for i, q in enumerate(q_vectors_c):
-            try:
-                new_q = return_to_brillouin(q, bz, cartesian=True)
-                q_vectors_bz_c.append(new_q)
-            except ValueError:
-                print("Found a kpoint that could not be returned to 1st BZ, "
-                      "ignoring...")
-                np.delete(lu_energies, i, axis=0)
+            ho_energy = self.ho_energies[kpoint_index]
 
-        q_vectors_bz = np.dot(q_vectors_bz_c, np.linalg.inv(
-            self._out.lattice_rec.matrix))
+            q_vectors = self._all_kpoints - np.vstack(
+                len(self._all_kpoints) * [kpoint])
+            lu_energies = self._all_lu_energies - ho_energy
 
-        q_110 = q_vectors_bz[0]
-        lu_110 = np.array([lu_energies[0], ])
+            q_vectors_c = np.dot(q_vectors, self._out.lattice_rec.matrix)
 
-        # Extract the kpoints in the 110 plane
-        for k, energy in zip(q_vectors_bz[1:], lu_energies[1:]):
-            if abs(k[2]) < 1e-5:
-                q_110 = np.vstack([q_110, k])
-                lu_110 = np.vstack([lu_110, energy])
+            q_vectors_bz_c = []
 
-        # Set up a new axis system to find suitable coordinates
-        b1 = self._out.lattice_rec.matrix[0, :]
-        b2 = self._out.lattice_rec.matrix[1, :]
+            for i, q in enumerate(q_vectors_c):
+                try:
+                    new_q = return_to_brillouin(q, bz, cartesian=True)
+                    q_vectors_bz_c.append(new_q)
+                except ValueError:
+                    print("Found a kpoint that could not be returned to 1st BZ, "
+                          "ignoring...")
+                    np.delete(lu_energies, i, axis=0)
 
-        vx = b1 - b2
-        vx = vx / np.linalg.norm(vx)
-        vy = b1 + b2
-        vy = vy / np.linalg.norm(vy)
-        vz = np.cross(vx, vy)
+            q_vectors_bz = np.dot(q_vectors_bz_c, np.linalg.inv(
+                self._out.lattice_rec.matrix))
 
-        v_mat = np.vstack([vx, vy, vz])
+            q_110 = q_vectors_bz[0]
+            lu_110 = np.array([lu_energies[0], ])
 
-        # Find the coordinates of the kpoints in this new axis system
-        q_110_v = np.dot(np.dot(q_110, self._out.lattice_rec.matrix),
-                         np.linalg.inv(v_mat))
+            # Extract the kpoints in the 110 plane
+            for k, energy in zip(q_vectors_bz[1:], lu_energies[1:]):
+                if abs(k[2]) < 1e-5:
+                    q_110 = np.vstack([q_110, k])
+                    lu_110 = np.vstack([lu_110, energy])
 
-        # Interpolate
-        x, y = np.mgrid[-2:2:0.02, -2:2:0.02]
+            # Set up a new axis system to find suitable coordinates
+            b1 = self._out.lattice_rec.matrix[0, :]
+            b2 = self._out.lattice_rec.matrix[1, :]
 
-        energies = interpolate.griddata(q_110_v[:, 0:2], lu_110, (x, y),
-                                 method='linear')
-        return (x, y, energies)
+            vx = b1 - b2
+            vx = vx / np.linalg.norm(vx)
+            vy = b1 + b2
+            vy = vy / np.linalg.norm(vy)
+            vz = np.cross(vx, vy)
+
+            v_mat = np.vstack([vx, vy, vz])
+
+            # Find the coordinates of the kpoints in this new axis system
+            q_110_v = np.dot(np.dot(q_110, self._out.lattice_rec.matrix),
+                             np.linalg.inv(v_mat))
+
+            # Interpolate
+            x, y = np.mgrid[-2:2:0.02, -2:2:0.02]
+
+            energies = interpolate.griddata(q_110_v[:, 0:2], lu_110, (x, y),
+                                            method='linear')
+
+            self._energy_maps[kpoint_index] = (x, y, energies)
+
+            return (x, y, energies)
 
     def plot_map(self, kpoint, cartesian=False):
         """
