@@ -409,7 +409,7 @@ def is_in_brillouin(kpoint, lattice, neighbors=None, cartesian=True):
 
     # Get all combinations of the reciprocal lattice vectors and the zero
     # vector, up to the maximum number of combination length
-    if not neighbors:
+    if neighbors is None:
         neighbors = set_up_neighbors(lattice)
 
     closest_point = np.array([0, 0, 0])
