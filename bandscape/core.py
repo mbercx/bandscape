@@ -18,7 +18,6 @@ from pymatgen.io.vasp.outputs import Vasprun
 
 
 class BandScape(object):
-
     def __init__(self, vasprun):
         """
         Initialize the BandScape from a pymatgen.io.vasp.outputs.Vasprun
@@ -31,6 +30,7 @@ class BandScape(object):
         self._kpoints = self._out.actual_kpoints
         self._eigenvals = list(self._out.eigenvalues.values())[0]
         self._lu_energies = self._find_lu_energies()
+        self._ho_energies = self._find_ho_energies()
         self._all_kpoints = None
         self._all_lu_energies = None
 
@@ -46,6 +46,10 @@ class BandScape(object):
     def lu_energies(self):
         return self._lu_energies
 
+    @property
+    def ho_energies(self):
+        return self._ho_energies
+
     def _find_lu_energies(self):
         """
 
@@ -60,6 +64,21 @@ class BandScape(object):
             lu_energies.append(kpoint[i, 0])
 
         return lu_energies
+
+    def _find_ho_energies(self):
+        """
+
+        :return:
+        """
+        ho_energies = []
+
+        for kpoint in self.eigenvals:
+            i = 0
+            while kpoint[i, 1] == 1:
+                i += 1
+            ho_energies.append(kpoint[i - 1, 0])
+
+        return ho_energies
 
     def reconstruct_bz_kpoints(self, tol=1e-2):
         """
@@ -87,7 +106,7 @@ class BandScape(object):
             # Get all symmetry equivalent kpoints of the kpoint in the IBZ
             sym_kpoints = np.dot(k, [m.rotation_matrix for m in symmops])
 
-            add_list = [sym_kpoints[0],]
+            add_list = [sym_kpoints[0], ]
 
             for point in list(sym_kpoints[1:]):
 
@@ -117,25 +136,57 @@ class BandScape(object):
         """
         return cls(Vasprun(filename))
 
-    def plot_map(self, kpoint, cartesian=False):
+    def find_energy_map(self, kpoint, cartestian=False):
         """
-        Plot the lowest energy transition map for each q vector in the 1st
-        Brillouin zone of a given initial state corresponding the kpoint.
+        Find the minimum energy map for transitions to the lowest unoccupied
+        states starting from a chosen initial kpoint in the IBZ.
 
-        Currently: Only possible for 110 map.
+        Args:
+            kpoint: Initial kpoint of the transition.
 
-        :param kpoint:
-        :return:
+        Returns:
+
         """
+        bz = set_up_brillouin(self._out.lattice)
 
+        kpoint_index = [i for i, x in enumerate(list(self.kpoints)) if
+                        np.linalg.norm(x - np.array(kpoint)) < 1e-4]
 
-        kpts_110 = self._all_kpoints[0]
-        lu_110 = np.array([self._all_lu_energies[0], ])
+        if len(kpoint_index) == 1:
+            kpoint_index = kpoint_index[0]
+        else:
+            raise ValueError("Kpoint not found in list of irreducible "
+                             "kpoints.")
+
+        ho_energy = self.ho_energies[kpoint_index]
+
+        q_vectors = self._all_kpoints - np.vstack(
+            len(self._all_kpoints) * [kpoint])
+        lu_energies = self._all_lu_energies - ho_energy
+
+        q_vectors_c = np.dot(q_vectors, self._out.lattice_rec.matrix)
+
+        q_vectors_bz_c = []
+
+        for i, q in enumerate(q_vectors_c):
+            try:
+                new_q = return_to_brillouin(q, bz, cartesian=True)
+                q_vectors_bz_c.append(new_q)
+            except ValueError:
+                print("Found a kpoint that could not be returned to 1st BZ, "
+                      "ignoring...")
+                np.delete(lu_energies, i, axis=0)
+
+        q_vectors_bz = np.dot(q_vectors_bz_c, np.linalg.inv(
+            self._out.lattice_rec.matrix))
+
+        q_110 = q_vectors_bz[0]
+        lu_110 = np.array([lu_energies[0], ])
 
         # Extract the kpoints in the 110 plane
-        for k, energy in zip(self._all_kpoints[1:], self._all_lu_energies[1:]):
+        for k, energy in zip(q_vectors_bz[1:], lu_energies[1:]):
             if abs(k[2]) < 1e-5:
-                kpts_110 = np.vstack([kpts_110, k])
+                q_110 = np.vstack([q_110, k])
                 lu_110 = np.vstack([lu_110, energy])
 
         # Set up a new axis system to find suitable coordinates
@@ -151,18 +202,124 @@ class BandScape(object):
         v_mat = np.vstack([vx, vy, vz])
 
         # Find the coordinates of the kpoints in this new axis system
-        kpts_110_v = np.dot(np.dot(kpts_110, self._out.lattice_rec.matrix),
-                            np.linalg.inv(v_mat))
+        q_110_v = np.dot(np.dot(q_110, self._out.lattice_rec.matrix),
+                         np.linalg.inv(v_mat))
 
         # Interpolate
-        x, y = np.mgrid[np.min(kpts_110_v[:, 0]):np.max(kpts_110_v[:, 0]):0.01,
-               np.min(kpts_110_v[:, 1]):np.max(kpts_110_v[:, 1]):0.01]
+        x, y = np.mgrid[-2:2:0.02, -2:2:0.02]
 
-        e = interpolate.griddata(kpts_110_v[:, 0:2], lu_110, (x, y),
-                                 method='cubic')
+        energies = interpolate.griddata(q_110_v[:, 0:2], lu_110, (x, y),
+                                 method='linear')
+        return (x, y, energies)
+
+    def plot_map(self, kpoint, cartesian=False):
+        """
+        Plot the lowest energy transition map for each q vector in the 1st
+        Brillouin zone of a given initial state corresponding the kpoint.
+
+        Currently: Only possible for 110 map.
+
+        Args:
+            kpoint:
+            cartesian:
+
+        Returns:
+
+        """
+
+        x, y, energies = self.find_energy_map(kpoint, cartesian)
 
         # Plot
-        plt.pcolor(x, y, e[:, :, 0], vmin=np.nanmin(e), vmax=np.nanmax(e),
+        plt.pcolor(x, y, energies[:, :, 0], vmin=np.nanmin(energies),
+                   vmax=np.nanmax(energies),
+                   cmap='viridis')
+        cbar = plt.colorbar()
+        cbar.set_label('Energy (eV)', size='x-large')
+
+        plt.show()
+
+    def plot_min_map(self, indices, cartesian=False):
+        """
+        Plot the lowest energy transition map for each q vector in the 1st
+        Brillouin zone of a given initial state corresponding the range of
+        kpoint indices.
+
+        Currently: Only possible for 110 map.
+
+        :param kpoint:
+        :return:
+        """
+        bz = set_up_brillouin(self._out.lattice)
+
+        energy_maps = []
+        x, y = np.mgrid[-2:2:0.02, -2:2:0.02]
+
+        for kpoint_index in indices:
+
+            kpoint = self.kpoints[kpoint_index]
+
+            ho_energy = self.ho_energies[kpoint_index]
+
+            q_vectors = self._all_kpoints - np.vstack(
+                len(self._all_kpoints) * [kpoint])
+            lu_energies = self._all_lu_energies - ho_energy
+
+            q_vectors_c = np.dot(q_vectors, self._out.lattice_rec.matrix)
+
+            q_vectors_bz_c = []
+
+            for i, q in enumerate(q_vectors_c):
+                try:
+                    new_q = return_to_brillouin(q, bz, cartesian=True)
+                    q_vectors_bz_c.append(new_q)
+                except ValueError:
+                    print(
+                        "Found a kpoint that could not be returned to 1st BZ, "
+                        "ignoring...")
+                    np.delete(lu_energies, i, axis=0)
+
+            q_vectors_bz = np.dot(q_vectors_bz_c, np.linalg.inv(
+                self._out.lattice_rec.matrix))
+
+            q_110 = q_vectors_bz[0]
+            lu_110 = np.array([lu_energies[0], ])
+
+            # Extract the kpoints in the 110 plane
+            for k, energy in zip(q_vectors_bz[1:], lu_energies[1:]):
+                if abs(k[2]) < 1e-5:
+                    q_110 = np.vstack([q_110, k])
+                    lu_110 = np.vstack([lu_110, energy])
+
+            # Set up a new axis system to find suitable coordinates
+            b1 = self._out.lattice_rec.matrix[0, :]
+            b2 = self._out.lattice_rec.matrix[1, :]
+
+            vx = b1 - b2
+            vx = vx / np.linalg.norm(vx)
+            vy = b1 + b2
+            vy = vy / np.linalg.norm(vy)
+            vz = np.cross(vx, vy)
+
+            v_mat = np.vstack([vx, vy, vz])
+
+            # Find the coordinates of the kpoints in this new axis system
+            q_110_v = np.dot(np.dot(q_110, self._out.lattice_rec.matrix),
+                             np.linalg.inv(v_mat))
+
+            # Interpolate
+            e = interpolate.griddata(q_110_v[:, 0:2], lu_110, (x, y),
+                                     method='linear')
+
+            energy_maps.append(e)
+
+        energy_maps = np.array(energy_maps)
+
+        min_energy_map = np.nanmin(energy_maps, axis=0)
+
+        # Plot
+        plt.pcolor(x, y, min_energy_map[:, :, 0],
+                   vmin=np.nanmin(min_energy_map),
+                   vmax=10.5,
                    cmap='viridis')
         cbar = plt.colorbar()
         cbar.set_label('Energy (eV)', size='x-large')
@@ -283,7 +440,8 @@ def set_up_brillouin(lattice):
 
     return bz_facets
 
-def is_in_brillouin(kpoint, brillouin, cartesian=True, tol=1e-3):
+
+def is_in_brillouin(kpoint, brillouin, cartesian=True, tol=1e-2):
     """
 
     :param kpoint:
@@ -300,7 +458,10 @@ def is_in_brillouin(kpoint, brillouin, cartesian=True, tol=1e-3):
 
     while in_brillouin and facet_number < len(brillouin):
 
-        if brillouin[facet_number].angle_to_normal(kpoint) < pi/2 - tol:
+        if np.linalg.norm(brillouin[facet_number].center - kpoint) < 1e-4:
+            return True
+
+        if brillouin[facet_number].angle_to_normal(kpoint) < pi / 2 - tol:
             in_brillouin = False
 
         facet_number += 1
@@ -309,7 +470,7 @@ def is_in_brillouin(kpoint, brillouin, cartesian=True, tol=1e-3):
 
 
 def return_to_brillouin(kpoint, brillouin, cartesian=True,
-                        max_combinations=2):
+                        max_combinations=3):
     """
     Return a kpoint to the first Brillouin zone.
 
@@ -337,14 +498,13 @@ def return_to_brillouin(kpoint, brillouin, cartesian=True,
         # vectors
         test_vectors = [sum(combination) for combination in combinations]
 
-        vector_number = 1 # Ignore the first test vector, i.e. the zero vector
+        vector_number = 1  # Ignore the first test vector, i.e. the zero vector
         # TODO remove all duplicate vectors
 
         new_kpoint = None
         in_brillouin = False
 
         while not in_brillouin and vector_number < len(test_vectors):
-
             new_kpoint = kpoint + test_vectors[vector_number]
             in_brillouin = is_in_brillouin(new_kpoint, brillouin)
 
@@ -357,7 +517,3 @@ def return_to_brillouin(kpoint, brillouin, cartesian=True,
             return new_kpoint
         else:
             raise ValueError("Could not find corresponding kpoint in 1st BZ.")
-
-
-
-
