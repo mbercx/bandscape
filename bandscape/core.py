@@ -451,8 +451,24 @@ def set_up_brillouin(lattice):
 
     return bz_facets
 
+def set_up_neighbors(lattice):
+    """
 
-def is_in_brillouin(kpoint, rec_lattice, cartesian=True):
+    :param lattice:
+    :return:
+    """
+    rec_lattice = lattice.reciprocal_lattice
+    bz_facet_coords = lattice.get_brillouin_zone()
+    neighbors = []
+
+    for facet in bz_facet_coords:
+        # The coordinates are transferred into sites to be able to use the
+        # Facet object more easily.
+        neighbors.append(np.mean(facet, axis=0))
+
+    return neighbors
+
+def is_in_brillouin(kpoint, lattice, neighbors=None, cartesian=True):
     """
 
     :param kpoint:
@@ -460,15 +476,16 @@ def is_in_brillouin(kpoint, rec_lattice, cartesian=True):
     :return:
     """
     if not cartesian:
-        kpoint = np.dot(kpoint, rec_lattice.matrix)
+        kpoint = np.dot(kpoint, lattice.reciprocal_lattice.matrix)
 
     in_brillouin = True
 
     # Get all combinations of the reciprocal lattice vectors and the zero
     # vector, up to the maximum number of combination length
-    neighbors = iter.combinations_with_replacement(
-        list(np.vstack([np.array([0, 0, 0]), rec_lattice.matrix,
-                        - rec_lattice.matrix])), 1)
+    if not neighbors:
+        neighbors = set_up_neighbors(lattice)
+
+    pdb.set_trace()
 
     closest_point = np.array([0, 0, 0])
     dist = np.linalg.norm(kpoint)
