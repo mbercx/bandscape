@@ -3,16 +3,13 @@
 import pdb
 
 import numpy as np
-import itertools as iter
 import matplotlib.pyplot as plt
-
-from math import pi
+from mpl_toolkits.mplot3d import Axes3D
 
 from scipy import interpolate
 
 from cage.core import Facet
 from pymatgen.core import PeriodicSite
-from pymatgen.util.coord import pbc_diff
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen.io.vasp.outputs import Vasprun
 
@@ -28,12 +25,11 @@ class BandScape(object):
 
         self._out = vasprun
         self._kpoints = self._out.actual_kpoints
-        self._energy_maps = [None]*len(self.kpoints)
         self._eigenvals = list(self._out.eigenvalues.values())[0]
         self._lu_energies = self._find_lu_energies()
         self._ho_energies = self._find_ho_energies()
-        self._all_kpoints = None
-        self._all_lu_energies = None
+        self.reconstruct_bz_kpoints()
+        self._energy_maps = [None] * len(self._all_kpoints)
 
     @property
     def kpoints(self):
@@ -81,7 +77,7 @@ class BandScape(object):
 
         return ho_energies
 
-    def reconstruct_bz_kpoints(self, tol=1e-2):
+    def reconstruct_bz_kpoints(self):
         """
         Reconstruct all the kpoints in the 1st Brillouin zone from the
         irreducible points chosen by VASP.
@@ -99,12 +95,14 @@ class BandScape(object):
 
         all_kpts = np.array(kpts_bz[0])
         all_lu_energies = np.array([self.lu_energies[0], ])
+        all_ho_energies = np.array([self.ho_energies[0], ])
 
         sg = SpacegroupAnalyzer(self._out.structures[-1])
         symmops = sg.get_point_group_operations(cartesian=False)
 
         # Reconstruct all the kpoints with the corresponding energies
-        for k, energy in zip(kpts_bz[1:], self.lu_energies[1:]):
+        for k, lu_energy, ho_energy in zip(kpts_bz[1:], self.lu_energies[1:],
+                                           self.ho_energies[1:]):
 
             # Get all symmetry equivalent kpoints of the kpoint in the IBZ
             sym_kpoints = np.dot(k, [m.rotation_matrix for m in symmops])
@@ -123,11 +121,15 @@ class BandScape(object):
             # Also add the energy value of the corresponding kpoint #sympoints
             # times
             all_lu_energies = np.vstack(
-                [all_lu_energies, np.ones([len(add_list), 1]) * energy]
+                [all_lu_energies, np.ones([len(add_list), 1]) * lu_energy]
+            )
+            all_ho_energies = np.vstack(
+                [all_ho_energies, np.ones([len(add_list), 1]) * ho_energy]
             )
 
         self._all_kpoints = all_kpts
         self._all_lu_energies = all_lu_energies
+        self._all_ho_energies = all_ho_energies
 
     @classmethod
     def from_file(cls, filename):
@@ -155,14 +157,13 @@ class BandScape(object):
 
         print("setting up index")
 
-        kpoint_index = [i for i, x in enumerate(list(self.kpoints)) if
+        kpoint_index = [i for i, x in enumerate(list(self._all_kpoints)) if
                         np.linalg.norm(x - np.array(kpoint)) < 1e-4]
 
         if len(kpoint_index) == 1:
             kpoint_index = kpoint_index[0]
         else:
-            raise ValueError("Kpoint not found in list of irreducible "
-                             "kpoints.")
+            raise ValueError("Kpoint not found in list of kpoints.")
 
         if self._energy_maps[kpoint_index]:
 
@@ -174,7 +175,7 @@ class BandScape(object):
 
             neighbors = set_up_neighbors(self._out.lattice)
 
-            ho_energy = self.ho_energies[kpoint_index]
+            ho_energy = self._all_ho_energies[kpoint_index]
 
             print("setting up q vectors")
 
@@ -182,12 +183,10 @@ class BandScape(object):
                                 self._out.lattice_rec.matrix)
 
             if not cartesian:
-                kpoint = np.dot(kpoint,  self._out.lattice_rec.matrix)
+                kpoint = np.dot(kpoint, self._out.lattice_rec.matrix)
 
-            q_vectors_c = all_kpts_c - np.vstack( len(all_kpts_c) * [kpoint])
+            q_vectors_c = all_kpts_c - np.vstack(len(all_kpts_c) * [kpoint])
             lu_energies = self._all_lu_energies - ho_energy
-
-            #pdb.set_trace()
 
             q_vectors_bz_c = []
 
@@ -200,8 +199,9 @@ class BandScape(object):
                                                 cartesian=True)
                     q_vectors_bz_c.append(new_q)
                 except ValueError:
-                    print("Found a kpoint that could not be returned to 1st BZ, "
-                          "ignoring...")
+                    print(
+                        "Found a kpoint that could not be returned to 1st BZ, "
+                        "ignoring...")
                     np.delete(lu_energies, i, axis=0)
 
             print("done!")
@@ -225,7 +225,7 @@ class BandScape(object):
 
                     if q_110 == []:
                         q_110 = k
-                        lu_110 = np.array([energy,])
+                        lu_110 = np.array([energy, ])
                     else:
                         q_110 = np.vstack([q_110, k])
                         lu_110 = np.vstack([lu_110, energy])
@@ -297,8 +297,7 @@ class BandScape(object):
         x, y = np.mgrid[-2:2:0.02, -2:2:0.02]
 
         for kpoint_index in indices:
-
-            kpoint = self.kpoints[kpoint_index]
+            kpoint = self._all_kpoints[kpoint_index]
 
             x, y, energies = self.find_energy_map(kpoint, cartesian)
 
@@ -311,18 +310,24 @@ class BandScape(object):
         # Plot
         plt.pcolor(x, y, min_energy_map[:, :, 0],
                    vmin=np.nanmin(min_energy_map),
-                   vmax=10.5,
+                   vmax=np.nanmax(min_energy_map),
                    cmap='viridis')
         cbar = plt.colorbar()
         cbar.set_label('Energy (eV)', size='x-large')
 
         plt.show()
 
-def set_up_brillouin(lattice):
-    """
 
-    :param lattice:
-    :return:
+def set_up_brillouin_facets(lattice):
+    """
+    Set up the facets of the 1st Brillouin zone as a list of cage.core.Facets.
+
+    Args:
+        lattice (pymatgen.core.lattice.Lattice): Lattice of the structure.
+
+    Returns:
+        (list) List of cage.core.Facet objects.
+
     """
     rec_lattice = lattice.reciprocal_lattice
     bz_facet_coords = lattice.get_brillouin_zone()
@@ -340,36 +345,51 @@ def set_up_brillouin(lattice):
 
     return bz_facets
 
+
 def set_up_neighbors(lattice):
     """
+    Set up the nearest neighbors for the gamma point of the reciprocal lattice.
 
-    :param lattice:
-    :return:
+    Args:
+        lattice (pymatgen.core.lattice.Lattice): Lattice of the structure.
+
+    Returns:
+        (list): List of coordinates (np.array) of the nearest reciprocal
+            lattice points.
+
     """
     bz_facet_coords = lattice.get_brillouin_zone()
     neighbors = []
 
     for facet in bz_facet_coords:
-        # The coordinates are transferred into sites to be able to use the
-        # Facet object more easily.
-        neighbors.append(np.mean(facet, axis=0)*2)
+
+        neighbors.append(np.mean(facet, axis=0) * 2)
 
     return neighbors
 
+
 def is_in_brillouin(kpoint, lattice, neighbors=None, cartesian=True):
     """
+    Check whether a k-point is in the 1st Brillouin zone of a lattice.
 
-    :param kpoint:
-    :param brillouin:
-    :return:
+    Args:
+        kpoint (3x1 numpy.array): Coordinates of the k-point.
+        lattice (pymatgen.core.lattice.Lattice): Lattice of the structure.
+        neighbors (list): List of coordinates (np.array) of the nearest
+            reciprocal lattice points.
+        cartesian (bool): Flag to indicate whether the coordinates are given in
+            cartesian or direct coordinates. Defaults to True.
+
+    Returns:
+        (tuple) [0]: (bool) Indicates whether or not the kpoint is in the
+                        1st Brillouin zone
+                [1]: (3x1 numpy.array) Closest neighbor.
     """
     if not cartesian:
         kpoint = np.dot(kpoint, lattice.reciprocal_lattice.matrix)
 
     in_brillouin = True
 
-    # Get all combinations of the reciprocal lattice vectors and the zero
-    # vector, up to the maximum number of combination length
     if neighbors is None:
         neighbors = set_up_neighbors(lattice)
 
@@ -379,7 +399,6 @@ def is_in_brillouin(kpoint, lattice, neighbors=None, cartesian=True):
     for point in neighbors:
 
         if np.linalg.norm(point - kpoint) < dist:
-
             in_brillouin = False
             dist = np.linalg.norm(point - kpoint)
             closest_point = point
@@ -389,14 +408,19 @@ def is_in_brillouin(kpoint, lattice, neighbors=None, cartesian=True):
 
 def return_to_brillouin(kpoint, lattice, neighbors=None, cartesian=True):
     """
-    Return a kpoint to the first Brillouin zone.
+    Return a k-point to the first Brillouin zone of a lattice.
 
-    Currently only works for points that are not too far away from the 1st BZ!
+    Args:
+        kpoint (3x1 numpy.array): Coordinates of the k-point.
+        lattice (pymatgen.core.lattice.Lattice): Lattice of the structure.
+        neighbors (list): List of coordinates (np.array) of the nearest
+            reciprocal lattice points.
+        cartesian (bool): Flag to indicate whether the coordinates are given in
+            cartesian or direct coordinates. Defaults to True.
 
-    :param kpoint: Reciprocal coordinates of the k-point
-    :param lattice: Lattice
+    Returns:
+        (3x1 numpy.array) Corresponding k-point in the 1st Brillouin zone.
 
-    :return:
     """
     in_brillouin, point = is_in_brillouin(kpoint, lattice,
                                           neighbors=neighbors,
@@ -414,7 +438,15 @@ def return_to_brillouin(kpoint, lattice, neighbors=None, cartesian=True):
             new_kpoint = np.dot(new_kpoint, np.linalg.inv(
                 lattice.reciprocal_lattice.matrix))
 
-        if is_in_brillouin(new_kpoint, lattice, neighbors, cartesian):
+        if is_in_brillouin(new_kpoint, lattice, neighbors, cartesian)[0]:
             return new_kpoint
         else:
-            raise ValueError("Could not find corresponding kpoint in 1st BZ.")
+            return return_to_brillouin(new_kpoint, lattice, neighbors,
+                                       cartesian)
+
+
+def plot_scatter(points):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.scatter(points[:, 0], points[:, 1], points[:, 2])
+    plt.show()
