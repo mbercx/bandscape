@@ -10,7 +10,7 @@ from mpl_toolkits.mplot3d import Axes3D
 from scipy import interpolate
 from monty.io import zopen
 from cage.core import Facet
-from monty.json import MSONable
+from monty.json import MSONable, MontyEncoder, MontyDecoder
 from pymatgen.core import PeriodicSite
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen.io.vasp.outputs import Vasprun
@@ -176,7 +176,7 @@ class Bandscape(MSONable):
             (bandscape.Bandscape)
         """
         if fmt == "json":
-            d = json.loads(input_string)
+            d = json.loads(input_string, cls=MontyDecoder)
             return cls.from_dict(d)
         else:
             raise NotImplementedError('Only json formats have been '
@@ -202,7 +202,7 @@ class Bandscape(MSONable):
             return cls.from_str(contents)
 
     def to(self, filename):
-            s = json.dumps(self.as_dict())
+            s = json.dumps(self.as_dict(), cls=MontyEncoder)
             if filename:
                 with zopen(filename, "wt") as f:
                     f.write("%s" % s)
