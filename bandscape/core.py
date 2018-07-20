@@ -144,7 +144,7 @@ class Bandscape(MSONable):
 
         d = {"@module": self.__class__.__module__,
              "@class": self.__class__.__name__,
-             "vasprun": self._out,
+             "vasprun": self._out.as_dict(),
              "energy_maps": self._energy_maps}
 
         return d
@@ -156,10 +156,50 @@ class Bandscape(MSONable):
         energy_maps.
 
         """
-        bandscape = cls(vasprun=d["vasprun"])
+        bandscape = cls(vasprun=Vasprun.from_dict(d["vasprun"]))
         bandscape._energy_maps = d["energy_maps"]
 
         return bandscape
+
+    @classmethod
+    def from_str(cls, input_string, fmt="json"):
+        """
+        Initialize a Bandscape from a string.
+
+        Currently only supports 'json' format.
+
+        Args:
+            input_string (str): String from which the Bandscape is initialized.
+            fmt (str): Format of the string representation.
+
+        Returns:
+            (bandscape.Bandscape)
+        """
+        if fmt == "json":
+            d = json.loads(input_string)
+            return cls.from_dict(d)
+        else:
+            raise NotImplementedError('Only json formats have been '
+                                      'implemented.')
+
+    @classmethod
+    def from_file(cls, fmt, filename):
+        """
+        Initialize a Bandscape from a file.
+
+        Args:
+            filename (str): File in which the Bandscape is stored.
+
+        Returns:
+            (bandscape.Bandscape)
+        """
+        if fmt == "vasprun":
+            return cls(Vasprun(filename))
+        else:
+            with zopen(filename) as file:
+                contents = file.read()
+
+            return cls.from_str(contents)
 
     def to(self, filename):
             s = json.dumps(self.as_dict())
@@ -169,16 +209,6 @@ class Bandscape(MSONable):
                 return
             else:
                 return s
-
-    @classmethod
-    def from_file(cls, filename):
-        """
-        Initialize the BandScape from a vasprun.xml file.
-
-        :param vasprun_file:
-        :return:
-        """
-        return cls(Vasprun(filename))
 
     def find_energy_map(self, kpoint, cartesian=False):
         """
