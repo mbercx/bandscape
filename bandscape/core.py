@@ -178,11 +178,16 @@ class BandScape(object):
 
             print("setting up q vectors")
 
-            q_vectors = self._all_kpoints - np.vstack(
-                len(self._all_kpoints) * [kpoint])
+            all_kpts_c = np.dot(self._all_kpoints,
+                                self._out.lattice_rec.matrix)
+
+            if not cartesian:
+                kpoint = np.dot(kpoint,  self._out.lattice_rec.matrix)
+
+            q_vectors_c = all_kpts_c - np.vstack( len(all_kpts_c) * [kpoint])
             lu_energies = self._all_lu_energies - ho_energy
 
-            q_vectors_c = np.dot(q_vectors, self._out.lattice_rec.matrix)
+            #pdb.set_trace()
 
             q_vectors_bz_c = []
 
@@ -206,16 +211,24 @@ class BandScape(object):
             q_vectors_bz = np.dot(q_vectors_bz_c, np.linalg.inv(
                 self._out.lattice_rec.matrix))
 
-            q_110 = q_vectors_bz[0]
-            lu_110 = np.array([lu_energies[0], ])
+            # q_110 = q_vectors_bz[0]
+            # lu_110 = np.array([lu_energies[0], ])
+
+            q_110 = []
+            lu_110 = []
 
             print("extracting q vectors in 110 plane.")
 
             # Extract the kpoints in the 110 plane
-            for k, energy in zip(q_vectors_bz[1:], lu_energies[1:]):
+            for k, energy in zip(q_vectors_bz, lu_energies):
                 if abs(k[2]) < 1e-5:
-                    q_110 = np.vstack([q_110, k])
-                    lu_110 = np.vstack([lu_110, energy])
+
+                    if q_110 == []:
+                        q_110 = k
+                        lu_110 = np.array([energy,])
+                    else:
+                        q_110 = np.vstack([q_110, k])
+                        lu_110 = np.vstack([lu_110, energy])
 
             # Set up a new axis system to find suitable coordinates
             b1 = self._out.lattice_rec.matrix[0, :]
