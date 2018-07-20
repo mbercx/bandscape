@@ -17,21 +17,24 @@ from pymatgen.io.vasp.outputs import Vasprun
 
 
 class Bandscape(MSONable):
-    def __init__(self, vasprun):
+    def __init__(self, vasprun, lu_modifier=0):
         """
         Initialize the BandScape from a pymatgen.io.vasp.outputs.Vasprun
         instance.
 
-        :param vasprun:
+        Args:
+            vasprun (pymatgen.io.vasp.outputs.Vasprun): Vasprun object.
+            lu_modifier (int):
         """
 
         self._out = vasprun
+        self._lu_modifier = lu_modifier
         self._kpoints = self._out.actual_kpoints
         self._eigenvals = list(self._out.eigenvalues.values())[0]
         self._lu_energies = self._find_lu_energies()
         self._ho_energies = self._find_ho_energies()
         self.reconstruct_bz_kpoints()
-        self._energy_maps = [None] * len(self._all_kpoints)
+        self._energy_maps = [(None, None, None)] * len(self._all_kpoints)
 
     @property
     def kpoints(self):
@@ -60,7 +63,7 @@ class Bandscape(MSONable):
             i = 0
             while kpoint[i, 1] == 1:
                 i += 1
-            lu_energies.append(kpoint[i, 0])
+            lu_energies.append(kpoint[i+self._lu_modifier, 0])
 
         return lu_energies
 
@@ -133,59 +136,41 @@ class Bandscape(MSONable):
         self._all_lu_energies = all_lu_energies
         self._all_ho_energies = all_ho_energies
 
-    def as_dict(self):
-        """""
-        Json-serialization dict representation of the Bandscape.
+    def save_energy_maps(self, filename):
 
-        Args:
-            verbosity (int): Verbosity level. Default of 0 only includes the
-                matrix representation. Set to 1 for more details.
-        """
+        i = 0
+        while self._energy_maps[i][0] is None:
+            i += 1
 
-        d = {"@module": self.__class__.__module__,
-             "@class": self.__class__.__name__,
-             "vasprun": self._out.as_dict(),
-             "energy_maps": self._energy_maps}
-
-        return d
-
-    @classmethod
-    def from_dict(cls, d):
-        """
-        Create a Bandscape from a dictionary containing the vasprun and
-        energy_maps.
-
-        """
-        bandscape = cls(vasprun=Vasprun.from_dict(d["vasprun"]))
-        bandscape._energy_maps = d["energy_maps"]
-
-        return bandscape
-
-    @classmethod
-    def from_str(cls, input_string, fmt="json"):
-        """
-        Initialize a Bandscape from a string.
-
-        Currently only supports 'json' format.
-
-        Args:
-            input_string (str): String from which the Bandscape is initialized.
-            fmt (str): Format of the string representation.
-
-        Returns:
-            (bandscape.Bandscape)
-        """
-        if fmt == "json":
-            d = json.loads(input_string, cls=MontyDecoder)
-            return cls.from_dict(d)
+        if i == len(self._energy_maps):
+            raise ValueError("No energy maps in Bandscape.")
         else:
-            raise NotImplementedError('Only json formats have been '
-                                      'implemented.')
+            d = {"x":self._energy_maps[i][0],
+                "y":self._energy_maps[i][1],
+                "energy_maps": [e[2] for e in self._energy_maps]}
+
+            s = json.dumps(d, cls=MontyEncoder)
+
+            if filename:
+                with zopen(filename, "wt") as f:
+                    f.write("%s" % s)
+                return
+            else:
+                return s
+
+    def load_energy_maps(self, filename):
+
+        with zopen(filename) as file:
+            contents = file.read()
+
+        d = json.loads(contents, cls=MontyDecoder)
+
+        self._energy_maps = [(d["x"], d["y"], e) for e in d["energy_maps"]]
 
     @classmethod
-    def from_file(cls, fmt, filename):
+    def from_file(cls, filename):
         """
-        Initialize a Bandscape from a file.
+        Initialize a Bandscape from a vasprun.xml file.
 
         Args:
             filename (str): File in which the Bandscape is stored.
@@ -193,22 +178,7 @@ class Bandscape(MSONable):
         Returns:
             (bandscape.Bandscape)
         """
-        if fmt == "vasprun":
-            return cls(Vasprun(filename))
-        else:
-            with zopen(filename) as file:
-                contents = file.read()
-
-            return cls.from_str(contents)
-
-    def to(self, filename):
-            s = json.dumps(self.as_dict(), cls=MontyEncoder)
-            if filename:
-                with zopen(filename, "wt") as f:
-                    f.write("%s" % s)
-                return
-            else:
-                return s
+        return cls(Vasprun(filename))
 
     def find_energy_map(self, kpoint, cartesian=False):
         """
@@ -234,7 +204,7 @@ class Bandscape(MSONable):
         else:
             raise ValueError("Kpoint not found in list of kpoints.")
 
-        if self._energy_maps[kpoint_index]:
+        if self._energy_maps[kpoint_index][2] is not None:
 
             return self._energy_maps[kpoint_index]
 
