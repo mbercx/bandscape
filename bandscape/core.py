@@ -1,20 +1,22 @@
 # Encoding UTF-8
 
 import pdb
+import json
 
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 from scipy import interpolate
-
+from monty.io import zopen
 from cage.core import Facet
+from monty.json import MSONable
 from pymatgen.core import PeriodicSite
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen.io.vasp.outputs import Vasprun
 
 
-class BandScape(object):
+class Bandscape(MSONable):
     def __init__(self, vasprun):
         """
         Initialize the BandScape from a pymatgen.io.vasp.outputs.Vasprun
@@ -130,6 +132,43 @@ class BandScape(object):
         self._all_kpoints = all_kpts
         self._all_lu_energies = all_lu_energies
         self._all_ho_energies = all_ho_energies
+
+    def as_dict(self):
+        """""
+        Json-serialization dict representation of the Bandscape.
+
+        Args:
+            verbosity (int): Verbosity level. Default of 0 only includes the
+                matrix representation. Set to 1 for more details.
+        """
+
+        d = {"@module": self.__class__.__module__,
+             "@class": self.__class__.__name__,
+             "vasprun": self._out,
+             "energy_maps": self._energy_maps}
+
+        return d
+
+    @classmethod
+    def from_dict(cls, d):
+        """
+        Create a Bandscape from a dictionary containing the vasprun and
+        energy_maps.
+
+        """
+        bandscape = cls(vasprun=d["vasprun"])
+        bandscape._energy_maps = d["energy_maps"]
+
+        return bandscape
+
+    def to(self, filename):
+            s = json.dumps(self.as_dict())
+            if filename:
+                with zopen(filename, "wt") as f:
+                    f.write("%s" % s)
+                return
+            else:
+                return s
 
     @classmethod
     def from_file(cls, filename):
